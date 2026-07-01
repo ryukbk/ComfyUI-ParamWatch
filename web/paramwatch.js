@@ -98,6 +98,26 @@ app.registerExtension({
     const selW = node.widgets?.find((w) => w.name === "selected");
     if (!namesW || !selW) return;
 
+    // Serialized mirrors of the current selection + its resolved value. A
+    // dynamically-repopulated COMBO doesn't reliably serialize its value to the
+    // backend, so we keep these plain-STRING widgets in sync and Python reads
+    // them. Hide them from the node UI (they're plumbing, not user inputs).
+    const labelW = node.widgets?.find((w) => w.name === "selected_label");
+    const valueW = node.widgets?.find((w) => w.name === "resolved_value");
+    for (const w of [labelW, valueW]) {
+      if (!w) continue;
+      w.type = "hidden";
+      w.hidden = true;
+      w.computeSize = () => [0, -4];
+    }
+    function syncMirror() {
+      if (labelW) labelW.value = String(selW.value ?? "");
+      if (valueW) {
+        const v = node._pwValueByLabel?.[selW.value];
+        valueW.value = v === undefined ? "" : String(v);
+      }
+    }
+
     // Read-only multiline display of the selected value.
     const display = node.addDOMWidget(
       "paramwatch_value",
@@ -140,6 +160,7 @@ app.registerExtension({
         selW.value = hint[0];
         _lastKey = "idle:" + raw;
         display.element.value = "";
+        syncMirror();
         managePoll();
         return;
       }
@@ -192,6 +213,7 @@ app.registerExtension({
       const v = node._pwValueByLabel?.[selW.value];
       display.element.value =
         v === undefined ? String(selW.value ?? "") : String(v);
+      syncMirror();
     }
 
     // Repopulate when the watch list changes, and refresh the value on select.

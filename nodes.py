@@ -69,6 +69,14 @@ class ParamWatch:
                     "tooltip": "Choose a collected node; its parameter value is "
                                "shown below and sent to the output.",
                 }),
+                # Serialized mirrors written by the JS extension. A dynamically
+                # repopulated COMBO ('selected') does not reliably serialize its
+                # value to the backend, so the JS also stores the chosen label and
+                # the resolved value here (plain STRINGs always serialize). Both
+                # are hidden on the node via the JS extension. Python trusts these
+                # first and falls back to PROMPT resolution for headless runs.
+                "selected_label": ("STRING", {"default": ""}),
+                "resolved_value": ("STRING", {"default": ""}),
             },
             "hidden": {
                 "prompt": "PROMPT",          # full workflow graph
@@ -89,29 +97,35 @@ class ParamWatch:
     def VALIDATE_INPUTS(cls, **kwargs):
         return True
 
-    def watch(self, param_names, selected, prompt=None, unique_id=None):
+    def watch(self, param_names, selected, selected_label="", resolved_value="",
+              prompt=None, unique_id=None):
         names = [n.strip() for n in param_names.split(",") if n.strip()]
         matches = [
             m for m in _iter_prompt_matches(prompt, names)
             if str(m[0]) != str(unique_id)   # never match ourselves
         ]
 
-        # Resolve the selection to a value. `selected` is the label
-        # "<id>: <class> [<param>]"; match by leading id + trailing [param].
+        # The effective selection label: trust the JS-serialized `selected_label`
+        # first (a dynamically-populated COMBO doesn't reliably serialize its own
+        # value), then fall back to the COMBO `selected`.
+        sel = selected_label or selected
+
+        # Resolve the label "<id>: <title> [<param>]" against the PROMPT graph:
+        # match the full label, else fall back to the leading node id.
         value = ""
         chosen = None
-        if selected and matches:
+        if sel and matches:
             for (nid, title, name, val) in matches:
-                if _label(nid, title, name) == selected:
+                if _label(nid, title, name) == sel:
                     chosen = (nid, title, name, val)
                     break
-            # Fallback: match by id prefix if the title/param label drifted.
-            if chosen is None and ":" in selected:
-                sel_id = selected.split(":", 1)[0].strip()
+            if chosen is None and ":" in sel:
+                sel_id = sel.split(":", 1)[0].strip()
                 for m in matches:
                     if m[0] == sel_id:
                         chosen = m
                         break
+
         # `value`: the selected node's parameter value.
         # `param_name`: which watched name that node matched on.
         out = ""
@@ -119,6 +133,11 @@ class ParamWatch:
         if chosen is not None:
             out = _stringify(chosen[3])
             param_name = chosen[2]
+        elif resolved_value:
+            # Graph resolution failed (e.g. the selected node was pruned from the
+            # executed prompt) but the frontend captured a value — use it so the
+            # output still matches what the node displays.
+            out = resolved_value
 
         # `all_values`: every collected value, one per line, each prefixed with
         # its label so the origin is unambiguous.
