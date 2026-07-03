@@ -61,18 +61,82 @@ function resolveLinkedString(node, inputName) {
   return null;
 }
 
-// Walk the live graph and return labels + a value lookup, mirroring the Python
-// side: "<id>: <title> [<param>]" for each node that has a matching WIDGET.
-// The label uses the node's editor Title (falling back to its class), matching
-// _meta.title that graphToPrompt writes into PROMPT, so the JS label and the
-// Python label agree.
+// --- Subgraph-aware graph traversal --------------------------------------
+// ComfyUI native subgraphs put nested nodes in a separate child graph, so a
+// single graph._nodes scan misses them. We walk the whole tree from the ROOT
+// graph and tag every node with its execution-id path. ComfyUI flattens
+// subgraph nodes into the prompt with colon-joined ids
+// ("<subgraphNodeId>:<innerId>", nesting deeper as "a:b:c"); mirroring that here
+// keeps the JS dropdown label in agreement with the Python PROMPT resolution.
+
+// The node array of a graph (property name varies across litegraph versions).
+function getNodesOf(graph) {
+  if (!graph) return [];
+  return graph._nodes || graph.nodes || [];
+}
+
+// The inner (child) graph of a subgraph container node, or null. Litegraph's
+// SubgraphNode exposes `.subgraph` and `isSubgraphNode()`; fall back to the
+// property alone for older/other builds.
+function getSubgraphOf(n) {
+  if (!n) return null;
+  if (typeof n.isSubgraphNode === "function") {
+    return n.isSubgraphNode() ? (n.subgraph || n.subGraph || null) : null;
+  }
+  return n.subgraph || n.subGraph || null;
+}
+
+// Walk up to the root graph so the scan covers the entire workflow regardless of
+// whether ParamWatch sits at the top level or inside a subgraph.
+function getRootGraph(graph) {
+  let g = graph || app.graph;
+  for (let guard = 0; g && guard < 64; guard++) {
+    const parentNode = g._subgraph_node || g.subgraphNode || null;
+    const parent =
+      (parentNode && parentNode.graph) || g.parentGraph || g._parent || null;
+    if (!parent || parent === g) break;
+    g = parent;
+  }
+  return g || app.graph;
+}
+
+// Depth-first collect of { node, execId } across the root graph and every nested
+// subgraph. Depth-guarded (not identity-deduped) so a subgraph DEFINITION reused
+// by multiple instance nodes is scanned once per instance, each with its own
+// distinct execId prefix — matching how the prompt flattens them.
+function collectAllNodes(rootGraph) {
+  const out = [];
+  const walk = (graph, prefix, depth) => {
+    if (!graph || depth > 20) return;
+    for (const n of getNodesOf(graph)) {
+      const execId = prefix ? `${prefix}:${n.id}` : String(n.id);
+      const sub = getSubgraphOf(n);
+      // A subgraph CONTAINER node is replaced by its inner nodes in the flattened
+      // prompt (its own execId never appears there), so recurse into it but don't
+      // emit it as a selectable match.
+      if (sub) {
+        walk(sub, execId, depth + 1);
+      } else {
+        out.push({ node: n, execId });
+      }
+    }
+  };
+  walk(rootGraph, "", 0);
+  return out;
+}
+
+// Walk the live graph (including subgraphs) and return labels + a value lookup,
+// mirroring the Python side: "<execId>: <title> [<param>]" for each node that
+// has a matching WIDGET. The label uses the node's editor Title (falling back to
+// its class), matching _meta.title that graphToPrompt writes into PROMPT, so the
+// JS label and the Python label agree.
 function scanGraph(node, names) {
   const labels = [];
   const valueByLabel = {};
-  const graph = node.graph;
-  if (!graph || !names.length) return { labels, valueByLabel };
-  for (const other of graph._nodes) {
-    if (other.id === node.id) continue;                 // skip self
+  if (!names.length) return { labels, valueByLabel };
+  const root = getRootGraph(node.graph || app.graph);
+  for (const { node: other, execId } of collectAllNodes(root)) {
+    if (other === node) continue;                       // skip self (by identity)
     if (!other.widgets) continue;
     const title = other.title || other.comfyClass || other.type || "?";
     for (const name of names) {
@@ -81,7 +145,7 @@ function scanGraph(node, names) {
       // Skip widgets that are currently converted to a link input (no live value).
       const asInput = other.inputs?.find((i) => i.name === name && i.link != null);
       if (asInput) continue;
-      const label = `${other.id}: ${title} [${name}]`;
+      const label = `${execId}: ${title} [${name}]`;
       labels.push(label);
       valueByLabel[label] = w.value;
     }

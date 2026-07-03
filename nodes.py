@@ -11,6 +11,11 @@ How it reads the graph: the hidden "PROMPT" input gives the full prompt dict
 {node_id: {"class_type": str, "inputs": {name: value|link}}}. A widget value is
 a literal; a LINKED input is a [src_id, slot] list — those are skipped because
 their value isn't resolvable from the static graph alone.
+
+Subgraphs: ComfyUI flattens native-subgraph nodes into PROMPT keyed by composite
+execution ids ("<subgraphNodeId>:<innerId>", nesting deeper as "a:b:c"), so this
+scan already sees them — no special handling needed here. The frontend builds
+matching composite-id labels so the JS dropdown and this resolver agree.
 """
 import json
 
@@ -119,8 +124,12 @@ class ParamWatch:
                 if _label(nid, title, name) == sel:
                     chosen = (nid, title, name, val)
                     break
-            if chosen is None and ":" in sel:
-                sel_id = sel.split(":", 1)[0].strip()
+            if chosen is None and ": " in sel:
+                # Split on the colon-SPACE that separates the id from the title.
+                # The id may itself contain bare colons for subgraph nodes
+                # (composite execution ids like "2:3" / "2:5:7"), so we must NOT
+                # split on a plain ":" here.
+                sel_id = sel.split(": ", 1)[0].strip()
                 for m in matches:
                     if m[0] == sel_id:
                         chosen = m

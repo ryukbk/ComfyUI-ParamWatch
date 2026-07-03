@@ -44,6 +44,12 @@ Because the dropdown is populated dynamically on the frontend, the node declares
 `VALIDATE_INPUTS(**kwargs) -> True` so the server's combo-membership check is
 skipped for the `selected` field.
 
+**Subgraphs are supported.** Nodes nested inside native ComfyUI subgraphs are
+found too — the frontend scan recurses into every subgraph, and both the
+dropdown label and the backend resolution key them by ComfyUI's composite
+execution id (`"<subgraphNodeId>:<innerId>"`, nesting deeper as `"a:b:c"`), so a
+watched parameter inside a subgraph shows up as e.g. `2:3: MyLoader [ckpt_name]`.
+
 ---
 
 ## Installation
