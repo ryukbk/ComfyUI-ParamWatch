@@ -20,9 +20,62 @@ matching composite-id labels so the JS dropdown and this resolver agree.
 import json
 
 
+# Shown for a watched param whose value is fed by a link that doesn't resolve to
+# an upstream literal (e.g. the output of a compute node) — the value only exists
+# at runtime, but the node is still listed/selectable.
+LINKED_UNRESOLVED = "(from linked node)"
+
+
+def _is_link(val):
+    """A linked input is serialized as [src_node_id, output_slot]."""
+    return (
+        isinstance(val, list)
+        and len(val) == 2
+        and isinstance(val[0], (str, int))
+        and isinstance(val[1], int)
+    )
+
+
+def _resolve_linked_value(prompt, val, _seen=None):
+    """Follow a link [src_id, slot] through the PROMPT to an upstream widget
+    literal, walking through Reroute-style pass-through nodes. Returns the literal
+    value, or LINKED_UNRESOLVED when the source is itself link-fed / computed."""
+    if _seen is None:
+        _seen = set()
+    for _ in range(64):
+        if not _is_link(val):
+            return val  # already a literal
+        src_id = str(val[0])
+        if src_id in _seen:
+            return LINKED_UNRESOLVED
+        _seen.add(src_id)
+        src = prompt.get(src_id) if prompt else None
+        if not isinstance(src, dict):
+            return LINKED_UNRESOLVED
+        src_inputs = src.get("inputs", {})
+        if not isinstance(src_inputs, dict):
+            return LINKED_UNRESOLVED
+        # Reroute: single input passes through — keep walking.
+        cls = src.get("class_type", "")
+        if cls == "Reroute" and len(src_inputs) == 1:
+            val = next(iter(src_inputs.values()))
+            continue
+        # Prefer a value-bearing widget literal on the source.
+        for key in ("value",):
+            if key in src_inputs and not _is_link(src_inputs[key]):
+                return src_inputs[key]
+        # Single non-link widget input → use it (Primitive/Constant style).
+        literals = [v for v in src_inputs.values() if not _is_link(v)]
+        if len(literals) == 1:
+            return literals[0]
+        return LINKED_UNRESOLVED
+    return LINKED_UNRESOLVED
+
+
 def _iter_prompt_matches(prompt, names):
     """Yield (node_id, class_type, param_name, value) for every node whose inputs
-    contain one of `names` as a WIDGET value (not a link)."""
+    contain one of `names` — as a WIDGET literal OR as a linked input, in which
+    case the link is followed to the upstream value when statically resolvable."""
     if not prompt:
         return
     for node_id, node in prompt.items():
@@ -38,9 +91,10 @@ def _iter_prompt_matches(prompt, names):
         for name in names:
             if name in inputs:
                 val = inputs[name]
-                # Skip linked inputs: [src_node_id, slot_index].
-                if isinstance(val, list) and len(val) == 2 and isinstance(val[0], (str, int)):
-                    continue
+                # Linked inputs [src_node_id, slot]: follow the link to the
+                # upstream literal instead of skipping the node entirely.
+                if _is_link(val):
+                    val = _resolve_linked_value(prompt, val)
                 yield (str(node_id), title, name, val)
 
 

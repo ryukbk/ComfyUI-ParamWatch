@@ -67,10 +67,25 @@ No dependencies beyond ComfyUI itself.
 
 ## Limitations (please read)
 
-- **Widget values only.** A parameter set by a **widget** is readable. A
-  parameter fed by a **link** (`[node_id, slot]`) is skipped — its runtime value
-  isn't in the static graph. If you need a linked/computed value, it simply isn't
-  knowable before (or without) execution.
+- **Widget values, plus link-followed values.** A parameter set by a **widget**
+  is read directly. A parameter fed by a **link** (`[node_id, slot]`) is now also
+  **listed**: if the link traces back to a readable upstream widget (String /
+  Primitive / Int / Float Constant, through Reroutes), its value is resolved and
+  shown. If the upstream is genuinely **computed** (a node with no readable
+  widget), the node still appears in the dropdown with the value shown as
+  `(from linked node)` — it's selectable, but the true value only exists at run
+  time and can't be previewed statically.
+- **Subgraph input boundaries.** When a node *inside a subgraph* gets a parameter
+  from the subgraph's widget/**input slot** (e.g. a Load Diffusion Model whose
+  `unet_name` is set on the subgraph and passed in via a subgraph input), the
+  value is found. ComfyUI has several widget-promotion mechanisms that differ by
+  version (link-to-boundary, store-backed promoted widgets, and `proxyWidgets`),
+  so rather than reverse-engineer each one, the live dropdown is populated from
+  ComfyUI's **own `graphToPrompt()`** — the same call used to queue a run. It
+  flattens subgraphs and resolves every promotion to a literal value keyed by the
+  composite execution id (`2:4`), so the editor preview matches exactly what the
+  backend executes. A parameter that is a genuine node-to-node connection (not a
+  promoted widget) still shows `(from linked node)`.
 - **Live dropdown needs a readable upstream.** When `param_names` is fed by a
   link, the editor follows it only if the source is a readable widget (String
   Constant / Primitive String, via Reroutes). A **computed** upstream string
