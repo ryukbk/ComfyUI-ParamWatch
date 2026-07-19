@@ -15,6 +15,12 @@ all collected values.
 
 - **`param_names`** (string) — comma-separated widget names to watch, e.g.
   `"ckpt_name, unet_name, gguf_name"`.
+- **`value_filter`** (string) — optional. When non-empty, narrows the `selected`
+  dropdown to entries whose **resolved value** contains this text
+  (case-insensitive substring) — handy when many nodes match `param_names`. An
+  entry whose value isn't resolvable yet is matched on its label instead, so it
+  stays findable by node id / param name. Clearing the box shows all matches
+  again. This is a frontend convenience only; it doesn't change the output.
 - **`selected`** (dropdown) — auto-populated with `"<node_id>: <title> [<param>]"`
   for every node in the workflow that has one of those widgets. The label uses each node's editor Title (falling back to its class name when untitled). Updates **live**
   in the editor as you edit `param_names` (or the String Constant feeding it),

@@ -358,6 +358,8 @@ app.registerExtension({
     const namesW = node.widgets?.find((w) => w.name === "param_names");
     const selW = node.widgets?.find((w) => w.name === "selected");
     if (!namesW || !selW) return;
+    // Optional value filter (may be absent on older serialized graphs).
+    const filterW = node.widgets?.find((w) => w.name === "value_filter");
 
     // Serialized mirrors of the current selection + its resolved value. A
     // dynamically-repopulated COMBO doesn't reliably serialize its value to the
@@ -410,12 +412,14 @@ app.registerExtension({
       return !!(inp && inp.link != null);
     }
     let _lastKey = null;
+    let _lastNames = [];
 
     function refreshOptions() {
       const raw = effectiveRaw();
       // Below the min-chars threshold: DON'T scan the graph — show a hint.
       if (!scanWorthwhile(raw)) {
         node._pwValueByLabel = {};
+        node._pwAllLabels = [];
         const hint = [`(type ${MIN_CHARS}+ chars to search)`];
         selW.options = { values: hint };
         selW.value = hint[0];
@@ -456,12 +460,47 @@ app.registerExtension({
       return { labels, valueByLabel };
     }
 
-    // Apply a {labels, valueByLabel} scan result to the dropdown + display,
-    // keeping the current selection when it is still valid.
+    // Apply a {labels, valueByLabel} scan result: stash the full (unfiltered)
+    // result, then render the dropdown through the value filter.
     function applyScan({ labels, valueByLabel }, names) {
       node._pwValueByLabel = valueByLabel;
-      const opts = labels.length ? labels : ["(no matching nodes)"];
-      _lastKey = names.join("|") + "" + opts.join("|");
+      node._pwAllLabels = labels;
+      _lastNames = names;
+      renderOptions();
+    }
+
+    // The current value-filter text (case-insensitive substring on the value).
+    function filterText() {
+      return String(filterW?.value ?? "").trim().toLowerCase();
+    }
+
+    // Keep only labels whose RESOLVED VALUE contains the filter text. Empty
+    // filter -> all labels. When a value is missing or still unresolved, match
+    // against the label text instead, so an unresolved entry stays findable by
+    // node id / param name.
+    function filteredLabels() {
+      const all = node._pwAllLabels || [];
+      const q = filterText();
+      if (!q) return all;
+      return all.filter((lbl) => {
+        const v = node._pwValueByLabel?.[lbl];
+        const hasValue = v !== undefined && v !== null && v !== LINKED_UNRESOLVED;
+        const hay = (hasValue ? String(v) : lbl).toLowerCase();
+        return hay.includes(q);
+      });
+    }
+
+    // Rebuild the dropdown options from the filtered label set, keeping the
+    // current selection when it survives the filter. Distinguishes "no matches
+    // at all" from "filter hid everything".
+    function renderOptions() {
+      const names = _lastNames || [];
+      const hasAny = (node._pwAllLabels || []).length > 0;
+      const shown = filteredLabels();
+      const opts = shown.length
+        ? shown
+        : [hasAny ? "(no values match filter)" : "(no matching nodes)"];
+      _lastKey = names.join("|") + "" + filterText() + "" + opts.join("|");
       selW.options = { values: opts };
       if (!opts.includes(selW.value)) {
         selW.value = opts[0];
@@ -524,6 +563,16 @@ app.registerExtension({
       updateDisplay();
       return r;
     };
+    // Value filter: no rescan needed — just re-render the existing matches
+    // through the filter. Cheap, so it runs on every keystroke.
+    if (filterW) {
+      const prevFilterCb = filterW.callback;
+      filterW.callback = function (...a) {
+        const r = prevFilterCb?.apply(this, a);
+        renderOptions();
+        return r;
+      };
+    }
 
     // Re-resolve immediately when param_names is connected/disconnected.
     const prevConn = node.onConnectionsChange;

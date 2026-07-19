@@ -121,6 +121,16 @@ class ParamWatch:
                     "tooltip": "Comma-separated widget names to watch across the "
                                "workflow, e.g. 'ckpt_name, unet_name, gguf_name'.",
                 }),
+                # Frontend-only convenience: when non-empty, the JS extension
+                # narrows the `selected` dropdown to entries whose resolved VALUE
+                # contains this text (case-insensitive substring). Does not affect
+                # backend resolution. Declared here so it persists with the graph.
+                "value_filter": ("STRING", {
+                    "default": "",
+                    "tooltip": "Filter the dropdown to collected nodes whose value "
+                               "contains this text (case-insensitive). Leave empty "
+                               "to show all matches.",
+                }),
                 # Populated dynamically by the JS extension with the collected
                 # "<id>: <class> [<param>]" labels. Server-side membership check
                 # is bypassed via VALIDATE_INPUTS below.
@@ -156,8 +166,10 @@ class ParamWatch:
     def VALIDATE_INPUTS(cls, **kwargs):
         return True
 
-    def watch(self, param_names, selected, selected_label="", resolved_value="",
-              prompt=None, unique_id=None):
+    def watch(self, param_names, selected, value_filter="", selected_label="",
+              resolved_value="", prompt=None, unique_id=None):
+        # value_filter is a frontend-only dropdown convenience; the backend still
+        # resolves whatever `selected`/`selected_label` the JS committed.
         names = [n.strip() for n in param_names.split(",") if n.strip()]
         matches = [
             m for m in _iter_prompt_matches(prompt, names)
